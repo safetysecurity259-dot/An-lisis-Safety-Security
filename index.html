@@ -82,6 +82,7 @@ th{color:var(--text-dim);font-weight:600;font-size:12px;text-transform:uppercase
     <button class="navbtn active" data-tab="dash">Panel</button>
     <button class="navbtn" data-tab="form">Registrar evento</button>
     <button class="navbtn" data-tab="import">Importar datos</button>
+    <button class="navbtn" data-tab="sync">Sincronización</button>
     <button class="navbtn" data-tab="data">Datos y exportar</button>
   </nav>
   <main>
@@ -169,6 +170,24 @@ th{color:var(--text-dim);font-weight:600;font-size:12px;text-transform:uppercase
       </div>
     </div>
 
+    <div class="tab" id="tab-sync">
+      <h1>Sincronización con Google Sheets</h1>
+      <p class="sub">Envía cada evento y tus análisis a una planilla de Google, para tener todo centralizado fuera de este navegador.</p>
+      <div class="panel">
+        <h2>Conectar tu planilla</h2>
+        <label>URL de tu Web App de Apps Script (termina en /exec)</label>
+        <input type="url" id="sheetsUrl" placeholder="https://script.google.com/macros/s/xxxxx/exec">
+        <div class="rowbtns" style="margin-top:12px;">
+          <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;"><input type="checkbox" id="autoSync" style="width:auto;"> Enviar cada evento nuevo automáticamente</label>
+        </div>
+        <div class="rowbtns" style="margin-top:14px;">
+          <button class="btn" id="btnSaveSync">Guardar</button>
+          <button class="btn secondary" id="btnSendAnalysis">Enviar análisis actual ahora</button>
+        </div>
+        <p class="sub" id="syncStatus" style="margin-top:10px;"></p>
+      </div>
+    </div>
+
     <div class="tab" id="tab-data">
       <h1>Datos registrados</h1>
       <p class="sub">Todo se guarda en este navegador. Puedes exportar o borrar todo.</p>
@@ -190,7 +209,17 @@ th{color:var(--text-dim);font-weight:600;font-size:12px;text-transform:uppercase
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
-const LS_KEY='prv_events_v1', LS_HH='prv_hh_v1';
+const LS_KEY='prv_events_v1', LS_HH='prv_hh_v1', LS_CFG='prv_sync_v1';
+let syncCfg = JSON.parse(localStorage.getItem(LS_CFG) || '{}');
+let lastAnalysisSnapshot = null;
+function sendToSheets(payload){
+  if(!syncCfg.url) return;
+  fetch(syncCfg.url, {
+    method:'POST', mode:'no-cors',
+    headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body: JSON.stringify(payload)
+  }).catch(()=>{});
+}
 let events = JSON.parse(localStorage.getItem(LS_KEY) || '[]');
 let hhMap = JSON.parse(localStorage.getItem(LS_HH) || '{}');
 const save = () => { try{localStorage.setItem(LS_KEY, JSON.stringify(events)); localStorage.setItem(LS_HH, JSON.stringify(hhMap));}catch(e){console.error(e);} };
@@ -206,7 +235,7 @@ document.querySelectorAll('.navbtn').forEach(b=>b.addEventListener('click',()=>{
 
 document.getElementById('eventForm').addEventListener('submit', e=>{
   e.preventDefault();
-  events.push({
+  const nuevo = {
     id: Date.now(),
     fecha: document.getElementById('f_fecha').value,
     tipo: document.getElementById('f_tipo').value,
@@ -215,8 +244,10 @@ document.getElementById('eventForm').addEventListener('submit', e=>{
     causa: document.getElementById('f_causa').value.trim() || 'Sin especificar',
     dias: Number(document.getElementById('f_dias').value)||0,
     desc: document.getElementById('f_desc').value.trim()
-  });
+  };
+  events.push(nuevo);
   save();
+  if(syncCfg.auto) sendToSheets(Object.assign({type:'evento'}, nuevo));
   e.target.reset();
   document.getElementById('f_dias').value=0;
   alert('Evento guardado.');
@@ -308,6 +339,7 @@ document.getElementById('fileInput').addEventListener('change', e=>{
   reader.readAsArrayBuffer(file);
 });
 document.getElementById('btnConfirmImport').addEventListener('click', ()=>{
+  if(syncCfg.auto) importPreview.forEach(r=>sendToSheets(Object.assign({type:'evento'}, r)));
   events=events.concat(importPreview); save(); importPreview=[]; renderPreview();
   alert('Registros agregados.');
 });
@@ -411,10 +443,27 @@ function render(){
     if(fatal>0) concl.push(`Se registran ${fatal} evento(s) de gravedad fatal. Esto requiere revisión inmediata y prioritaria.`);
   }
   document.getElementById('conclusiones').innerHTML = concl.length ? `<ul>${concl.map(c=>`<li>${c}</li>`).join('')}</ul>` : '<p class="empty">Carga al menos algunos eventos para generar conclusiones.</p>';
+  lastAnalysisSnapshot = { total, acc, inc, cuasi, stop, dias: diasPerdidos, IF: IF||'', IG: IG||'', conclusiones: concl.join(' | ') };
 }
 
 render();
 renderTable();
+
+// ---- Sincronización con Google Sheets ----
+document.getElementById('sheetsUrl').value = syncCfg.url || '';
+document.getElementById('autoSync').checked = !!syncCfg.auto;
+document.getElementById('btnSaveSync').addEventListener('click', ()=>{
+  syncCfg = { url: document.getElementById('sheetsUrl').value.trim(), auto: document.getElementById('autoSync').checked };
+  localStorage.setItem(LS_CFG, JSON.stringify(syncCfg));
+  document.getElementById('syncStatus').textContent = 'Configuración guardada.';
+});
+document.getElementById('btnSendAnalysis').addEventListener('click', ()=>{
+  const statusEl = document.getElementById('syncStatus');
+  if(!syncCfg.url){ statusEl.textContent='Primero pega y guarda la URL de tu planilla.'; return; }
+  if(!lastAnalysisSnapshot){ statusEl.textContent='Aún no hay análisis para enviar.'; return; }
+  sendToSheets(Object.assign({type:'analisis'}, lastAnalysisSnapshot));
+  statusEl.textContent='Análisis enviado. Revisa la pestaña "Analisis" de tu planilla en unos segundos.';
+});
 </script>
 </body>
 </html>

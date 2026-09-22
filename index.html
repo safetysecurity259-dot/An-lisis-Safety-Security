@@ -60,7 +60,7 @@ input,select,textarea{width:100%;background:var(--surface-2);border:1px solid va
 textarea{resize:vertical;min-height:56px;}
 .btn{background:var(--accent);color:var(--accent-ink);border:none;border-radius:7px;padding:11px 18px;font:inherit;font-weight:600;font-size:14px;cursor:pointer;}
 .btn.secondary{background:var(--surface-2);color:var(--text);border:1px solid var(--border);}
-.period-btn.active{background:var(--accent);color:var(--accent-ink);border-color:transparent;}
+.period-btn.active,.tipo-btn.active{background:var(--accent);color:var(--accent-ink);border-color:transparent;}
 .rowbtns{display:flex;gap:10px;grid-column:1/-1;margin-top:4px;}
 table{width:100%;border-collapse:collapse;font-size:13.5px;}
 th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--border);}
@@ -101,6 +101,12 @@ th{color:var(--text-dim);font-weight:600;font-size:12px;text-transform:uppercase
           </div>
           <div><label>Desde</label><input type="date" id="filterFrom"></div>
           <div><label>Hasta</label><input type="date" id="filterTo"></div>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:12px;">
+          <button class="btn secondary tipo-btn active" data-tipo="Accidente">Accidentes</button>
+          <button class="btn secondary tipo-btn active" data-tipo="Incidente">Incidentes</button>
+          <button class="btn secondary tipo-btn active" data-tipo="Cuasi">Cuasi accidentes</button>
+          <button class="btn secondary tipo-btn active" data-tipo="STOP">Tarjetas STOP</button>
         </div>
       </div>
       <div class="kpis" id="kpiBox"></div>
@@ -174,6 +180,10 @@ th{color:var(--text-dim);font-weight:600;font-size:12px;text-transform:uppercase
         <div id="sheetPicker" style="display:none;margin-top:12px;">
           <label>Hoja a analizar</label>
           <select id="sheetSelect"></select>
+        </div>
+        <div style="margin-top:12px;">
+          <label>Columna de fecha del evento</label>
+          <select id="importFechaCol"><option value="">Detectar automáticamente</option></select>
         </div>
         <div style="margin-top:12px;">
           <label>Tipo para estos registros</label>
@@ -334,9 +344,19 @@ function cleanRecord(o){
   };
 }
 function pickVal(row,regex){for(const k in row){if(regex.test(normKey(k)))return row[k];}return'';}
-function csvRowToRecord(row, tipoOverride){
+function pickFecha(row, colOverride){
+  if(colOverride && colOverride in row) return row[colOverride];
+  const keys=Object.keys(row);
+  let k=keys.find(k=>/fecha.*(accident|incident|evento|ocurr|suceso)|(accident|incident|evento|ocurr|suceso).*fecha/.test(normKey(k)));
+  if(k) return row[k];
+  k=keys.find(k=>(/fecha|date/.test(normKey(k))) && !/registro|carga|reporte|ingreso|creacion|creaci/.test(normKey(k)));
+  if(k) return row[k];
+  k=keys.find(k=>/fecha|date/.test(normKey(k)));
+  return k?row[k]:'';
+}
+function csvRowToRecord(row, tipoOverride, fechaCol){
   return cleanRecord({
-    fecha:pickVal(row,/fecha|date/),
+    fecha:pickFecha(row, fechaCol),
     tipo:tipoOverride || pickVal(row,/tipo|type|categoria/),
     area:pickVal(row,/area|proceso|zona|departamento/),
     gravedad:pickVal(row,/graved|severity/),
@@ -356,8 +376,16 @@ function parseSheet(sheetName){
   currentSheetName = sheetName;
   const ws = currentWorkbook.Sheets[sheetName];
   const rows = XLSX.utils.sheet_to_json(ws, {defval:''});
-  const override = document.getElementById('importTipoOverride').value;
-  importPreview = rows.map(r=>csvRowToRecord(r, override));
+  const fechaSelect = document.getElementById('importFechaCol');
+  if(rows.length){
+    const cols = Object.keys(rows[0]);
+    const prev = fechaSelect.value;
+    fechaSelect.innerHTML = '<option value="">Detectar automáticamente</option>' + cols.map(c=>`<option value="${c}">${c}</option>`).join('');
+    if(cols.includes(prev)) fechaSelect.value = prev;
+  }
+  const tipoOverride = document.getElementById('importTipoOverride').value;
+  const fechaCol = fechaSelect.value;
+  importPreview = rows.map(r=>csvRowToRecord(r, tipoOverride, fechaCol));
   renderPreview();
 }
 document.getElementById('fileInput').addEventListener('change', e=>{
@@ -381,6 +409,9 @@ document.getElementById('sheetSelect').addEventListener('change', e=>{
   if(currentWorkbook) parseSheet(e.target.value);
 });
 document.getElementById('importTipoOverride').addEventListener('change', ()=>{
+  if(currentWorkbook && currentSheetName) parseSheet(currentSheetName);
+});
+document.getElementById('importFechaCol').addEventListener('change', ()=>{
   if(currentWorkbook && currentSheetName) parseSheet(currentSheetName);
 });
 document.getElementById('btnConfirmImport').addEventListener('click', ()=>{
@@ -409,6 +440,7 @@ function renderTable(){
 }
 
 let filterFrom='', filterTo='';
+let activeTipos=new Set(['Accidente','Incidente','Cuasi','STOP']);
 const MESES=['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
 function mesLabel(m){ const p=m.split('-'); return `${MESES[parseInt(p[1],10)-1]} ${p[0]}`; }
 function buildParetoData(causasOrd){
@@ -447,7 +479,7 @@ function inRange(fecha){
 }
 function render(){
   const kpiBox=document.getElementById('kpiBox');
-  const data=events.filter(e=>inRange(e.fecha));
+  const data=events.filter(e=>inRange(e.fecha) && activeTipos.has(e.tipo));
   const total=data.length;
   const acc=data.filter(e=>e.tipo==='Accidente').length;
   const inc=data.filter(e=>e.tipo==='Incidente').length;
@@ -538,6 +570,12 @@ function applyPeriod(period){
 document.querySelectorAll('.period-btn').forEach(b=>b.addEventListener('click',()=>applyPeriod(b.dataset.period)));
 document.getElementById('filterFrom').addEventListener('change', e=>{ filterFrom=e.target.value; document.querySelectorAll('.period-btn').forEach(b=>b.classList.remove('active')); render(); });
 document.getElementById('filterTo').addEventListener('change', e=>{ filterTo=e.target.value; document.querySelectorAll('.period-btn').forEach(b=>b.classList.remove('active')); render(); });
+document.querySelectorAll('.tipo-btn').forEach(b=>b.addEventListener('click', ()=>{
+  const t=b.dataset.tipo;
+  if(activeTipos.has(t)){ activeTipos.delete(t); b.classList.remove('active'); }
+  else { activeTipos.add(t); b.classList.add('active'); }
+  render();
+}));
 
 applyPeriod('all');
 renderTable();

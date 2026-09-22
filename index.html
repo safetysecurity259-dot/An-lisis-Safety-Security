@@ -158,6 +158,10 @@ th{color:var(--text-dim);font-weight:600;font-size:12px;text-transform:uppercase
       <div class="panel">
         <h2>Desde archivo (CSV o Excel)</h2>
         <input type="file" id="fileInput" accept=".csv,.xlsx,.xls">
+        <div id="sheetPicker" style="display:none;margin-top:12px;">
+          <label>Hoja a analizar</label>
+          <select id="sheetSelect"></select>
+        </div>
         <p class="sub" style="margin:10px 0 0;">Reconoce columnas como fecha, tipo, área, gravedad, causa, días perdidos y descripción, en cualquier orden.</p>
       </div>
       <div class="panel" id="previewPanel" style="display:none;">
@@ -323,20 +327,32 @@ function renderPreview(){
   document.getElementById('previewCount').textContent=importPreview.length;
   document.getElementById('previewPanel').style.display=importPreview.length?'block':'none';
 }
+let currentWorkbook = null;
+function parseSheet(sheetName){
+  const ws = currentWorkbook.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json(ws, {defval:''});
+  importPreview = rows.map(csvRowToRecord);
+  renderPreview();
+}
 document.getElementById('fileInput').addEventListener('change', e=>{
   const file=e.target.files[0]; if(!file) return;
   const reader=new FileReader();
   reader.onload=ev=>{
     try{
-      const wb=XLSX.read(ev.target.result,{type:'array'});
-      const ws=wb.Sheets[wb.SheetNames[0]];
-      const rows=XLSX.utils.sheet_to_json(ws,{defval:''});
-      importPreview=rows.map(csvRowToRecord);
-      renderPreview();
+      currentWorkbook=XLSX.read(ev.target.result,{type:'array'});
+      const names=currentWorkbook.SheetNames;
+      const picker=document.getElementById('sheetPicker');
+      const select=document.getElementById('sheetSelect');
+      select.innerHTML = names.map(n=>`<option value="${n}">${n}</option>`).join('');
+      picker.style.display = names.length>1 ? 'block' : 'none';
+      parseSheet(names[0]);
     }catch(err){ alert('No se pudo leer el archivo. Verifica que sea un CSV o Excel válido.'); }
   };
   reader.onerror=()=>alert('No se pudo leer el archivo.');
   reader.readAsArrayBuffer(file);
+});
+document.getElementById('sheetSelect').addEventListener('change', e=>{
+  if(currentWorkbook) parseSheet(e.target.value);
 });
 document.getElementById('btnConfirmImport').addEventListener('click', ()=>{
   if(syncCfg.auto) importPreview.forEach(r=>sendToSheets(Object.assign({type:'evento'}, r)));

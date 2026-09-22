@@ -162,6 +162,16 @@ th{color:var(--text-dim);font-weight:600;font-size:12px;text-transform:uppercase
           <label>Hoja a analizar</label>
           <select id="sheetSelect"></select>
         </div>
+        <div style="margin-top:12px;">
+          <label>Tipo para estos registros</label>
+          <select id="importTipoOverride">
+            <option value="">Detectar automáticamente (según columna "tipo")</option>
+            <option value="Accidente">Forzar todos como Accidente</option>
+            <option value="Incidente">Forzar todos como Incidente</option>
+            <option value="Cuasi">Forzar todos como Cuasi accidente</option>
+            <option value="STOP">Forzar todos como Tarjeta STOP</option>
+          </select>
+        </div>
         <p class="sub" style="margin:10px 0 0;">Reconoce columnas como fecha, tipo, área, gravedad, causa, días perdidos y descripción, en cualquier orden.</p>
       </div>
       <div class="panel" id="previewPanel" style="display:none;">
@@ -187,6 +197,7 @@ th{color:var(--text-dim);font-weight:600;font-size:12px;text-transform:uppercase
         <div class="rowbtns" style="margin-top:14px;">
           <button class="btn" id="btnSaveSync">Guardar</button>
           <button class="btn secondary" id="btnSendAnalysis">Enviar análisis actual ahora</button>
+          <button class="btn secondary" id="btnPullSheets">Actualizar desde Sheets</button>
         </div>
         <p class="sub" id="syncStatus" style="margin-top:10px;"></p>
       </div>
@@ -310,10 +321,10 @@ function cleanRecord(o){
   };
 }
 function pickVal(row,regex){for(const k in row){if(regex.test(normKey(k)))return row[k];}return'';}
-function csvRowToRecord(row){
+function csvRowToRecord(row, tipoOverride){
   return cleanRecord({
     fecha:pickVal(row,/fecha|date/),
-    tipo:pickVal(row,/tipo|type|categoria/),
+    tipo:tipoOverride || pickVal(row,/tipo|type|categoria/),
     area:pickVal(row,/area|proceso|zona|departamento/),
     gravedad:pickVal(row,/graved|severity/),
     causa:pickVal(row,/causa|cause|motivo/),
@@ -327,11 +338,13 @@ function renderPreview(){
   document.getElementById('previewCount').textContent=importPreview.length;
   document.getElementById('previewPanel').style.display=importPreview.length?'block':'none';
 }
-let currentWorkbook = null;
+let currentWorkbook = null, currentSheetName = null;
 function parseSheet(sheetName){
+  currentSheetName = sheetName;
   const ws = currentWorkbook.Sheets[sheetName];
   const rows = XLSX.utils.sheet_to_json(ws, {defval:''});
-  importPreview = rows.map(csvRowToRecord);
+  const override = document.getElementById('importTipoOverride').value;
+  importPreview = rows.map(r=>csvRowToRecord(r, override));
   renderPreview();
 }
 document.getElementById('fileInput').addEventListener('change', e=>{
@@ -353,6 +366,9 @@ document.getElementById('fileInput').addEventListener('change', e=>{
 });
 document.getElementById('sheetSelect').addEventListener('change', e=>{
   if(currentWorkbook) parseSheet(e.target.value);
+});
+document.getElementById('importTipoOverride').addEventListener('change', ()=>{
+  if(currentWorkbook && currentSheetName) parseSheet(currentSheetName);
 });
 document.getElementById('btnConfirmImport').addEventListener('click', ()=>{
   if(syncCfg.auto) importPreview.forEach(r=>sendToSheets(Object.assign({type:'evento'}, r)));
@@ -479,6 +495,22 @@ document.getElementById('btnSendAnalysis').addEventListener('click', ()=>{
   if(!lastAnalysisSnapshot){ statusEl.textContent='Aún no hay análisis para enviar.'; return; }
   sendToSheets(Object.assign({type:'analisis'}, lastAnalysisSnapshot));
   statusEl.textContent='Análisis enviado. Revisa la pestaña "Analisis" de tu planilla en unos segundos.';
+});
+document.getElementById('btnPullSheets').addEventListener('click', async ()=>{
+  const statusEl = document.getElementById('syncStatus');
+  if(!syncCfg.url){ statusEl.textContent='Primero pega y guarda la URL de tu planilla.'; return; }
+  statusEl.textContent='Consultando la planilla...';
+  try{
+    const res = await fetch(syncCfg.url, {method:'GET'});
+    const rows = await res.json();
+    if(!Array.isArray(rows)){ statusEl.textContent='La planilla respondió con un formato inesperado.'; return; }
+    if(!confirm(`Se encontraron ${rows.length} registro(s) en la planilla. Esto reemplazará los datos cargados en este navegador. ¿Continuar?`)){ statusEl.textContent=''; return; }
+    events = rows.map(r=>cleanRecord(r));
+    save(); render(); renderTable();
+    statusEl.textContent = `Se cargaron ${events.length} registro(s) desde Sheets.`;
+  }catch(e){
+    statusEl.textContent = 'No se pudo leer la planilla. Verifica que el script tenga la función doGet y que esté implementado con acceso "Cualquier usuario".';
+  }
 });
 </script>
 </body>

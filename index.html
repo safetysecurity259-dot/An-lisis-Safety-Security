@@ -200,6 +200,11 @@ th{color:var(--text-dim);font-weight:600;font-size:12px;text-transform:uppercase
           </select>
         </div>
         <p class="sub" style="margin:10px 0 0;">Reconoce columnas como fecha, tipo, área, gravedad, causa, días perdidos y descripción, en cualquier orden.</p>
+        <div style="margin-top:14px;">
+          <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;"><input type="checkbox" id="excludeCatChk" style="width:auto;" checked> Excluir filas donde la columna "categoria" sea igual a:</label>
+          <input type="text" id="excludeCatVal" value="No Ley" style="margin-top:6px;max-width:220px;">
+          <p class="sub" id="excludeInfo" style="margin-top:8px;"></p>
+        </div>
       </div>
       <div class="panel" id="previewPanel" style="display:none;">
         <h2>Vista previa (<span id="previewCount">0</span> registros detectados)</h2>
@@ -388,13 +393,25 @@ function renderPreview(){
   document.getElementById('previewPanel').style.display=importPreview.length?'block':'none';
 }
 let currentWorkbook = null, currentSheetName = null;
+function shouldExcludeRow(row){
+  const chk=document.getElementById('excludeCatChk');
+  if(!chk || !chk.checked) return false;
+  const excludeVal=document.getElementById('excludeCatVal').value.trim();
+  if(!excludeVal) return false;
+  const catVal=pickVal(row,/categoria|category/);
+  if(catVal===''||catVal===undefined||catVal===null) return false;
+  return normKey(catVal)===normKey(excludeVal);
+}
 function parseSheet(sheetName){
   currentSheetName = sheetName;
   const ws = currentWorkbook.Sheets[sheetName];
-  const rows = XLSX.utils.sheet_to_json(ws, {defval:''});
+  const allRows = XLSX.utils.sheet_to_json(ws, {defval:''});
+  const rows = allRows.filter(r=>!shouldExcludeRow(r));
+  const excludedCount = allRows.length - rows.length;
+  document.getElementById('excludeInfo').textContent = excludedCount>0 ? `${excludedCount} fila(s) excluida(s) por categoría.` : '';
   const fechaSelect = document.getElementById('importFechaCol');
-  if(rows.length){
-    const cols = Object.keys(rows[0]);
+  if(allRows.length){
+    const cols = Object.keys(allRows[0]);
     const prev = fechaSelect.value;
     fechaSelect.innerHTML = '<option value="">Detectar automáticamente</option>' + cols.map(c=>`<option value="${c}">${c}</option>`).join('');
     if(cols.includes(prev)) fechaSelect.value = prev;
@@ -428,6 +445,12 @@ document.getElementById('importTipoOverride').addEventListener('change', ()=>{
   if(currentWorkbook && currentSheetName) parseSheet(currentSheetName);
 });
 document.getElementById('importFechaCol').addEventListener('change', ()=>{
+  if(currentWorkbook && currentSheetName) parseSheet(currentSheetName);
+});
+document.getElementById('excludeCatChk').addEventListener('change', ()=>{
+  if(currentWorkbook && currentSheetName) parseSheet(currentSheetName);
+});
+document.getElementById('excludeCatVal').addEventListener('input', ()=>{
   if(currentWorkbook && currentSheetName) parseSheet(currentSheetName);
 });
 document.getElementById('btnConfirmImport').addEventListener('click', ()=>{
